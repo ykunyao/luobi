@@ -13,7 +13,7 @@ export const SYSTEM_PROMPT = `你是一个 Git 提交信息生成助手。请根
 
 ## 规则
 
-1. **格式**: \`type: 中文描述\`
+1. **格式**: \`type: 中文描述\` 或 \`type(scope): 中文描述\`（scope 是可选的，仅在用户指定时使用）
 2. **类型 (type)** 必须从以下选择：
    - \`feat\` — 新功能
    - \`fix\` — 修复 bug
@@ -48,27 +48,42 @@ build: 移除废弃的 lodash 依赖
 以下为 git diff --staged 的内容（如果过长可能已截断）：`;
 
 /**
- * Build user message with optional type constraint.
+ * Build user message with optional type and scope constraints.
  * If `type` is specified, instruct the LLM to use that exact type.
+ * If `scope` is specified, instruct the LLM to include it in the format.
  */
-export function buildUserMessage(diff: string, files: string[], type?: CommitType): string {
+export function buildUserMessage(
+  diff: string,
+  files: string[],
+  type?: CommitType,
+  scope?: string,
+): string {
   const lines = [diff, "", "---", `涉及文件 (${files.length}):`, ...files.map((f) => `  - ${f}`)];
 
-  if (type) {
+  if (type && scope) {
+    lines.unshift(`请使用 \`${type}(${scope}):\` 格式生成提交信息。\n`);
+  } else if (type) {
     lines.unshift(`请使用 \`${type}\` 类型生成提交信息。\n`);
+  } else if (scope) {
+    lines.unshift(`请在提交信息中使用 \`(${scope}):\` 标注影响范围。\n`);
   }
 
   return lines.join("\n");
 }
 
 /** Truncate diff with a note if it exceeds the limit */
-export function truncateDiff(diff: string, maxLength: number): { text: string; truncated: boolean } {
+export function truncateDiff(
+  diff: string,
+  maxLength: number,
+): { text: string; truncated: boolean } {
   if (diff.length <= maxLength) {
     return { text: diff, truncated: false };
   }
   const truncated = diff.slice(0, maxLength);
   return {
-    text: truncated + `\n\n[注意：diff 内容过长，已截断至 ${maxLength} 字符。请基于可见部分分析。]`,
+    text:
+      truncated +
+      `\n\n[注意：diff 内容过长，已截断至 ${maxLength} 字符。请基于可见部分分析。]`,
     truncated: true,
   };
 }

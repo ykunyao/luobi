@@ -72,9 +72,49 @@ export async function amendCommit(message: string): Promise<string> {
 
 /**
  * Push current branch to remote.
+ * Parses stderr for common failures and produces user-friendly Chinese messages.
  */
 export async function push(): Promise<string> {
-  return git(["push"]);
+  try {
+    return await git(["push"]);
+  } catch (err: unknown) {
+    const error = err as Error & { stderr?: string; exitCode?: number };
+    const stderr = error.stderr ?? error.message ?? String(err);
+
+    if (
+      /No configured push destination/i.test(stderr) ||
+      /No path specified/i.test(stderr)
+    ) {
+      throw new Error(
+        "未配置远程仓库，请先运行 git remote add origin <url>",
+      );
+    }
+    if (/has no upstream branch/i.test(stderr)) {
+      throw new Error(
+        "当前分支未设置上游，请先运行 git push -u origin <branch>",
+      );
+    }
+    if (/rejected/i.test(stderr) || /failed to push/i.test(stderr)) {
+      throw new Error(
+        "推送被拒绝，远程可能有新提交。请先 git pull",
+      );
+    }
+    if (
+      /Could not read from remote repository/i.test(stderr) ||
+      /Permission denied/i.test(stderr)
+    ) {
+      throw new Error(
+        "无法访问远程仓库，请检查 SSH 密钥或仓库权限",
+      );
+    }
+    if (/Could not resolve host/i.test(stderr)) {
+      throw new Error(
+        "无法解析远程地址，请检查网络连接",
+      );
+    }
+
+    throw error;
+  }
 }
 
 /**

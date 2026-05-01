@@ -9,6 +9,7 @@ import { SYSTEM_PROMPT, buildUserMessage } from "./prompt.js";
  * @param diff    The full or truncated staged diff text
  * @param files   The list of staged files (for additional context)
  * @param type    Optional: force a specific Conventional Commits type
+ * @param scope   Optional: add a scope to the Conventional Commits format
  * @returns       The generated commit message
  */
 export async function generateCommitMessage(
@@ -16,6 +17,7 @@ export async function generateCommitMessage(
   diff: string,
   files: string[],
   type?: CommitType,
+  scope?: string,
 ): Promise<CommitMessageResult> {
   const client = new OpenAI({
     apiKey: config.apiKey,
@@ -24,7 +26,7 @@ export async function generateCommitMessage(
     maxRetries: 1,
   });
 
-  const userMessage = buildUserMessage(diff, files, type);
+  const userMessage = buildUserMessage(diff, files, type, scope);
 
   try {
     const response = await client.chat.completions.create({

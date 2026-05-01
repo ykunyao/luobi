@@ -48,6 +48,14 @@ export function writeConfig(config: LuobiConfig): void {
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2), "utf-8");
 }
 
+/** Delete the config file. Does nothing if the file doesn't exist. */
+export function resetConfig(): void {
+  const filePath = configFilePath();
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
 /** Prompt user for config values interactively using readline. */
 export async function promptForConfig(): Promise<LuobiConfig> {
   const rl = readline.createInterface({
