@@ -37,9 +37,29 @@ lb
 |------|------|
 | `lb` | 生成提交信息并提交 |
 | `luobi` | 同 `lb` |
+| `lb -y` | 跳过确认，直接提交 |
+| `lb --type <type>` | 指定提交类型（feat/fix/chore/...） |
 | `lb --dry-run` | 仅预览提交信息，不实际提交 |
 | `lb --amend` | 修改上一次提交的信息 |
 | `lb --push` | 提交后自动推送到远程仓库 |
+| `lb -y --push` | 一键提交+推送，无需确认 |
+
+### 配置管理
+
+```bash
+lb config show                    # 查看当前配置（Key 自动脱敏）
+lb config set key sk-xxx          # 更换 API Key
+lb config set model deepseek-chat # 切换模型
+lb config set url https://...     # 更换 API 地址
+```
+
+### 常用组合
+
+```bash
+lb -y --push                      # 最省事的用法：一条命令完成提交+推送
+lb --type fix -y --push           # 明确是修复，直接提交推送
+lb --type chore --dry-run         # 看看 AI 会生成什么，不提交
+```
 
 ## 配置
 

@@ -28,6 +28,27 @@ export interface CommitContext {
   truncated: boolean;
 }
 
+/** File patterns to exclude from diff (lockfiles, minified, binary) */
+export const EXCLUDED_FILE_PATTERNS = [
+  /^package-lock\.json$/,
+  /^yarn\.lock$/,
+  /^pnpm-lock\.yaml$/,
+  /^composer\.lock$/,
+  /^Gemfile\.lock$/,
+  /^Cargo\.lock$/,
+  /^poetry\.lock$/,
+  /\.min\.(js|css|[a-z]+)$/i,
+  /\.lock$/,
+] as const;
+
+/** Conventional Commits types */
+export const COMMIT_TYPES = [
+  "feat", "fix", "refactor", "chore", "docs",
+  "style", "test", "perf", "ci", "build",
+] as const;
+
+export type CommitType = (typeof COMMIT_TYPES)[number];
+
 /** Default values */
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_MODEL = "gpt-4o-mini";

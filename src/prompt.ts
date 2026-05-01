@@ -1,3 +1,5 @@
+import { EXCLUDED_FILE_PATTERNS, type CommitType, MAX_DIFF_LENGTH } from "./types.js";
+
 /**
  * System prompt template for LLM-based commit message generation.
  *
@@ -7,7 +9,6 @@
  * - Follow Conventional Commits format
  * - Output ONLY the commit message string
  */
-
 export const SYSTEM_PROMPT = `你是一个 Git 提交信息生成助手。请根据提供的 git diff 分析改动内容，生成一条符合 Conventional Commits 规范的中文提交信息。
 
 ## 规则
@@ -46,6 +47,20 @@ build: 移除废弃的 lodash 依赖
 
 以下为 git diff --staged 的内容（如果过长可能已截断）：`;
 
+/**
+ * Build user message with optional type constraint.
+ * If `type` is specified, instruct the LLM to use that exact type.
+ */
+export function buildUserMessage(diff: string, files: string[], type?: CommitType): string {
+  const lines = [diff, "", "---", `涉及文件 (${files.length}):`, ...files.map((f) => `  - ${f}`)];
+
+  if (type) {
+    lines.unshift(`请使用 \`${type}\` 类型生成提交信息。\n`);
+  }
+
+  return lines.join("\n");
+}
+
 /** Truncate diff with a note if it exceeds the limit */
 export function truncateDiff(diff: string, maxLength: number): { text: string; truncated: boolean } {
   if (diff.length <= maxLength) {
@@ -56,4 +71,29 @@ export function truncateDiff(diff: string, maxLength: number): { text: string; t
     text: truncated + `\n\n[注意：diff 内容过长，已截断至 ${maxLength} 字符。请基于可见部分分析。]`,
     truncated: true,
   };
+}
+
+/**
+ * Check if a file path matches any excluded pattern (lockfiles, minified, etc.)
+ */
+export function isExcludedFile(filePath: string): boolean {
+  const basename = filePath.split("/").pop() ?? filePath;
+  return EXCLUDED_FILE_PATTERNS.some((pattern) => pattern.test(basename));
+}
+
+/**
+ * Filter out lockfile/minified file sections from the diff text.
+ * Git diff sections are delimited by "diff --git a/..." headers.
+ */
+export function filterLockfileDiff(diff: string): string {
+  // Split by diff --git headers, keeping the delimiter
+  const sections = diff.split(/\n(?=diff --git a\/)/);
+  return sections
+    .filter((section) => {
+      const match = section.match(/^diff --git a\/(.+) b\//);
+      if (!match) return true; // keep non-diff text
+      const filePath = match[1];
+      return !isExcludedFile(filePath);
+    })
+    .join("\n");
 }

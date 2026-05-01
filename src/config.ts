@@ -91,6 +91,20 @@ export async function promptForConfig(): Promise<LuobiConfig> {
   return config;
 }
 
+/**
+ * Update a single config field and save to disk.
+ * Reads existing config first, merges, then writes.
+ */
+export function updateConfigField(field: keyof LuobiConfig, value: string): LuobiConfig {
+  const existing = readConfig();
+  if (!existing) {
+    throw new Error("配置文件不存在，请先运行 lb 进行首次配置");
+  }
+  const updated = { ...existing, [field]: value };
+  writeConfig(updated);
+  return updated;
+}
+
 /** Get config — either read from disk or prompt user interactively. */
 export async function getConfig(): Promise<LuobiConfig> {
   const existing = readConfig();

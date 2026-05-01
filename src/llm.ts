@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import type { LuobiConfig, CommitMessageResult } from "./types.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
+import type { LuobiConfig, CommitMessageResult, CommitType } from "./types.js";
+import { SYSTEM_PROMPT, buildUserMessage } from "./prompt.js";
 
 /**
  * Call the LLM to generate a commit message based on the staged diff.
@@ -8,12 +8,14 @@ import { SYSTEM_PROMPT } from "./prompt.js";
  * @param config  The user's API configuration
  * @param diff    The full or truncated staged diff text
  * @param files   The list of staged files (for additional context)
+ * @param type    Optional: force a specific Conventional Commits type
  * @returns       The generated commit message
  */
 export async function generateCommitMessage(
   config: LuobiConfig,
   diff: string,
   files: string[],
+  type?: CommitType,
 ): Promise<CommitMessageResult> {
   const client = new OpenAI({
     apiKey: config.apiKey,
@@ -22,13 +24,7 @@ export async function generateCommitMessage(
     maxRetries: 1,
   });
 
-  const userMessage = [
-    diff,
-    "",
-    "---",
-    `涉及文件 (${files.length}):`,
-    ...files.map((f) => `  - ${f}`),
-  ].join("\n");
+  const userMessage = buildUserMessage(diff, files, type);
 
   try {
     const response = await client.chat.completions.create({

@@ -1,8 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
+import * as readline from "node:readline";
 
-import { getConfig } from "./config.js";
+import { getConfig, updateConfigField, readConfig } from "./config.js";
 import {
   isGitRepo,
   getStagedDiff,
@@ -14,8 +15,8 @@ import {
   push,
 } from "./git.js";
 import { generateCommitMessage } from "./llm.js";
-import { truncateDiff } from "./prompt.js";
-import { MAX_DIFF_LENGTH } from "./types.js";
+import { truncateDiff, filterLockfileDiff, isExcludedFile } from "./prompt.js";
+import { MAX_DIFF_LENGTH, COMMIT_TYPES, type CommitType } from "./types.js";
 
 const program = new Command();
 
@@ -27,6 +28,8 @@ program
   .option("--dry-run", "仅预览提交信息，不实际提交", false)
   .option("--amend", "修改上一次提交的信息（git commit --amend）", false)
   .option("--push", "提交后自动推送到远程仓库", false)
+  .option("-y, --yes", "跳过确认，直接提交", false)
+  .option("--type <type>", "指定提交类型（feat/fix/chore/...）")
   .action(async (options) => {
     try {
       await run(options);
@@ -37,9 +40,73 @@ program
     }
   });
 
+// ─── Config Subcommand ──────────────────────────────────────────────────────
+
+const configCmd = program
+  .command("config")
+  .description("查看或修改配置");
+
+configCmd
+  .command("show")
+  .description("显示当前配置")
+  .action(() => {
+    const config = readConfig();
+    if (!config) {
+      console.log(chalk.yellow("⚠ 尚未配置，请先运行 lb 进行首次配置"));
+      process.exit(0);
+    }
+    console.log("");
+    console.log(chalk.bold("落笔配置:"));
+    console.log(chalk.dim("─".repeat(40)));
+    console.log(`  API Key   ${chalk.dim(":")} ${maskKey(config.apiKey)}`);
+    console.log(`  模型      ${chalk.dim(":")} ${chalk.cyan(config.model)}`);
+    console.log(`  API 地址  ${chalk.dim(":")} ${chalk.cyan(config.baseUrl)}`);
+    console.log(chalk.dim("─".repeat(40)));
+    console.log("");
+  });
+
+configCmd
+  .command("set <field> <value>")
+  .description("修改配置项（key/model/url）")
+  .action((field: string, value: string) => {
+    const fieldMap: Record<string, keyof import("./types.js").LuobiConfig> = {
+      key: "apiKey",
+      apikey: "apiKey",
+      model: "model",
+      url: "baseUrl",
+    };
+
+    const mapped = fieldMap[field.toLowerCase()];
+    if (!mapped) {
+      console.log(chalk.red(`✗ 未知配置项: ${field}`));
+      console.log(chalk.dim("  可用项: key, model, url"));
+      process.exit(1);
+    }
+
+    try {
+      const updated = updateConfigField(mapped, value);
+      console.log(chalk.green(`✔ 已更新 ${mapped}: ${maskValue(mapped, value)}`));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`✗ ${msg}`));
+      process.exit(1);
+    }
+  });
+
 // ─── Main Flow ───────────────────────────────────────────────────────────────
 
-async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) {
+interface RunOptions {
+  dryRun: boolean;
+  amend: boolean;
+  push: boolean;
+  yes: boolean;
+  type?: string;
+}
+
+async function run(options: RunOptions) {
+  // Validate --type
+  const commitType = validateType(options.type);
+
   // 1. Check we're in a git repo
   {
     const spinner = ora("检查 Git 仓库…").start();
@@ -54,14 +121,25 @@ async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) 
 
   // 2. Check for staged changes
   const spinner = ora("读取暂存区改动…").start();
-  const diff = await getStagedDiff();
-  const files = await getStagedFiles();
+  let diff = await getStagedDiff();
+  let files = await getStagedFiles();
+
+  // Filter out lockfiles/minified from files list
+  const excludedFiles = files.filter(isExcludedFile);
+  files = files.filter((f) => !isExcludedFile(f));
 
   if (!diff || files.length === 0) {
     spinner.fail("暂存区没有改动");
     console.log(chalk.yellow("\n💡 请先用 git add 暂存需要提交的文件"));
     console.log(chalk.dim("   → 运行 git add <file> 或 git add . 来暂存改动"));
     process.exit(0);
+  }
+
+  // Filter lockfile sections from diff
+  if (excludedFiles.length > 0) {
+    spinner.text = "读取暂存区改动（已过滤 lockfile）…";
+    diff = filterLockfileDiff(diff);
+    console.log(chalk.dim(`  已自动跳过 ${excludedFiles.length} 个文件: ${excludedFiles.slice(0, 3).join(", ")}${excludedFiles.length > 3 ? " ..." : ""}`));
   }
   spinner.succeed(`读取到 ${chalk.cyan(files.length)} 个暂存文件`);
 
@@ -85,7 +163,7 @@ async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) 
 
   let result;
   try {
-    result = await generateCommitMessage(config, diffToSend, files);
+    result = await generateCommitMessage(config, diffToSend, files, commitType);
     aiSpinner.succeed("提交信息已生成");
   } catch (error: unknown) {
     aiSpinner.fail("AI 生成提交信息失败");
@@ -98,6 +176,9 @@ async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) 
   console.log("");
   console.log(chalk.bold("━".repeat(60)));
   console.log("");
+  if (commitType) {
+    console.log(`  ${chalk.dim("指定类型:")} ${chalk.magenta(commitType)}`);
+  }
   console.log(`  ${chalk.cyan.bold("📝 提交信息:")}  ${chalk.green(result.message)}`);
   console.log("");
   console.log(chalk.dim(`  涉及文件: ${files.slice(0, 5).join(", ")}${files.length > 5 ? ` ... 等 ${files.length} 个文件` : ""}`));
@@ -115,14 +196,18 @@ async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) 
     return;
   }
 
-  // 9. Confirm with user
-  console.log("");
-  const action = options.amend ? "修改上一次提交信息" : "提交";
-  const confirmed = await confirmAction(`确认${action}? (y/n) `);
+  // 9. Confirm with user (skip if --yes)
+  if (!options.yes) {
+    console.log("");
+    const action = options.amend ? "修改上一次提交信息" : "提交";
+    const confirmed = await confirmAction(`确认${action}? (y/n) `);
 
-  if (!confirmed) {
-    console.log(chalk.yellow("\n🚫 已取消，未提交"));
-    process.exit(0);
+    if (!confirmed) {
+      console.log(chalk.yellow("\n🚫 已取消，未提交"));
+      process.exit(0);
+    }
+  } else {
+    console.log(chalk.dim("\n  (-y 已跳过确认)"));
   }
 
   // 10. Commit
@@ -180,12 +265,32 @@ async function run(options: { dryRun: boolean; amend: boolean; push: boolean }) 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Validate --type option returns a valid CommitType or undefined */
+function validateType(type?: string): CommitType | undefined {
+  if (!type) return undefined;
+  const t = type.toLowerCase();
+  if (!(COMMIT_TYPES as readonly string[]).includes(t)) {
+    console.log(chalk.red(`\n✗ 无效的提交类型: "${type}"`));
+    console.log(chalk.dim(`  可选类型: ${COMMIT_TYPES.join(", ")}`));
+    process.exit(1);
+  }
+  return t as CommitType;
+}
+
 /**
  * Simple readline confirmation prompt.
  * Returns true if user enters 'y' or 'Y'.
+ * Falls back gracefully when not in a TTY (e.g., piped input).
  */
 function confirmAction(prompt: string): Promise<boolean> {
   return new Promise((resolve) => {
+    // Not a TTY — can't do interactive confirm. Auto-reject safely.
+    if (!process.stdin.isTTY) {
+      console.log(chalk.yellow(`\n⚠  非交互终端，无法确认。请使用 -y 跳过确认`));
+      resolve(false);
+      return;
+    }
+
     const { stdin, stdout } = process;
 
     // Handle Ctrl+C gracefully — just resolve as false
@@ -212,6 +317,18 @@ function confirmAction(prompt: string): Promise<boolean> {
     stdin.resume();
     stdin.once("data", onData);
   });
+}
+
+/** Mask API key for display: sk-...xxxx */
+function maskKey(key: string): string {
+  if (key.length <= 8) return "***";
+  return key.slice(0, 6) + "..." + key.slice(-4);
+}
+
+/** Mask value for set command display — hide full API key */
+function maskValue(field: string, value: string): string {
+  if (field === "apiKey") return maskKey(value);
+  return value;
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
